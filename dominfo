@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# dominfo
+# by Eric Fitzgerald (github@efitz.net)
+# Enumerates subdomains and gathers DNS info for each
+# Use case: investigating dangling DNS/subdomain takeover risks
+
+# Developed on MacOS Monterey 12.4
+# Dependencies (homebrew): ansifilter, pv
+# Dependencies (other): Sublist3r 
+
+PROJECTS="$HOME/Projects"
+SUBLIST3R="$PROJECTS/Sublist3r"
+VENVNAME="env"
+DOMAINFILE="$PROJECTS/subdomains/domains"
+SUBDOMAINFILE="$PROJECTS/subdomains/subdomains"
+OUTPUTFILE="$PROJECTS/subdomains/subdomains-diginfo.tsv"
+TEMPFILE="$PROJECTS/subdomains/tempfile"
+DNSSERVER="8.8.8.8"
+
+rm $SUBDOMAINFILE
+rm $OUTPUTFILE
+rm $TEMPFILE
+
+# Enumerate domains with Sublist3r
+DOMAINS=$(cat $DOMAINFILE)
+WCDOMAINS=($(wc $DOMAINFILE))
+NUMDOMAINS=${WCDOMAINS[0]}
+echo "$NUMDOMAINS domains to enumerate"
+source "$SUBLIST3R/$VENVNAME/bin/activate"
+for DOMAIN in $DOMAINS
+do
+    #echo "Enumerating subomains for $DOMAIN with Sublist3r"
+    python3 "$SUBLIST3R/sublist3r.py" -d $DOMAIN > "$TEMPFILE"
+    # ansifilter strips escape codes
+    # grep removes header lines and then filters only on FQDNs
+    cat "$TEMPFILE" | ansifilter | grep -v " " | grep "." >> "$SUBDOMAINFILE"
+    rm "$TEMPFILE"
+done | pv -cltp -s $NUMDOMAINS > /dev/null
+
+# Use dig to get information about the A and SOA records of identifed subdomains
+NAMES=$(cat $SUBDOMAINFILE)
+WCNAMES=($(wc $SUBDOMAINFILE))
+NUMNAMES=${WCNAMES[0]}
+echo "$NUMNAMES subdomains to enumerate"
+for NAME in $NAMES
+do
+    #echo "Querying DNS for $NAME"
+    # 'dig -t a' outputs both A records *and* CNAME records
+    # 'dig -t cname' only outputs CNAME so we use type a
+    # 'grep -v ";"' removes dig comments
+    dig @$DNSSERVER -t a -q $NAME +noall +answer | grep -v ";" >> "$TEMPFILE"
+    dig @$DNSSERVER -t soa -q $NAME +noall +authority | grep -v ";" >> "$TEMPFILE"
+done | pv -cltp -s $NUMNAMES > /dev/null
+
+# Clean up and write final output
+# Delete blank lines: sed '/^$/d'
+# Replace one or more tabs with a single tab: sed 's/\t\t*/\t/g'
+# Replace spaces with tabs: sed 's/ /\t/g'
+# Extract only relevant fields (1=name, 4=type, 5=address) with cut
+cat "$TEMPFILE" | sed '/^$/d' | sed 's/\t\t*/\t/g' | sed 's/ /\t/g' | cut -f1,4-5 > "$OUTPUTFILE"
+rm "$TEMPFILE"
+open "$OUTPUTFILE"
