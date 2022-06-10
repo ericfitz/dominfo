@@ -18,9 +18,9 @@ OUTPUTFILE="$PROJECTS/subdomains/subdomains-diginfo.tsv"
 TEMPFILE="$PROJECTS/subdomains/tempfile"
 DNSSERVER="8.8.8.8"
 
-rm $SUBDOMAINFILE
-rm $OUTPUTFILE
-rm $TEMPFILE
+rm $SUBDOMAINFILE 2> /dev/null
+rm $OUTPUTFILE 2> /dev/null
+rm $TEMPFILE 2> /dev/null
 
 # Enumerate domains with Sublist3r
 DOMAINS=$(cat $DOMAINFILE)
