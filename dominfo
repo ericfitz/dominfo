@@ -9,49 +9,59 @@
 # Dependencies (homebrew): ansifilter, pv
 # Dependencies (other): Sublist3r 
 
-PROJECTS="$HOME/Projects"
-SUBLIST3R="$PROJECTS/Sublist3r"
+WORKINGDIR="$HOME/Projects/subdomains"
+SUBLIST3R="$HOME/Projects/Sublist3r"
 VENVNAME="env"
-DOMAINFILE="$PROJECTS/subdomains/domains"
-SUBDOMAINFILE="$PROJECTS/subdomains/subdomains"
-OUTPUTFILE="$PROJECTS/subdomains/subdomains-diginfo.tsv"
-TEMPFILE="$PROJECTS/subdomains/tempfile"
+INPUTDOMAINFILENAME="$WORKINGDIR/domains"
+SUBDOMAINFILENAME="$WORKINGDIR/subdomains"
+OUTPUTFILE="$WORKINGDIR/subdomains-diginfo.tsv"
+TEMPFILE="$WORKINGDIR/tempfile"
 DNSSERVER="8.8.8.8"
 
-rm $SUBDOMAINFILE 2> /dev/null
+rm $SUBDOMAINFILENAME 2> /dev/null
 rm $OUTPUTFILE 2> /dev/null
 rm $TEMPFILE 2> /dev/null
 
 # Enumerate domains with Sublist3r
-DOMAINS=$(cat $DOMAINFILE)
-WCDOMAINS=($(wc $DOMAINFILE))
+DOMAINS=$(cat $INPUTDOMAINFILENAME)
+WCDOMAINS=($(wc $INPUTDOMAINFILENAME))
 NUMDOMAINS=${WCDOMAINS[0]}
-echo "$NUMDOMAINS domains to enumerate"
+clear
+echo "Step 1/2: $NUMDOMAINS domains to enumerate with Sublist3r"
 source "$SUBLIST3R/$VENVNAME/bin/activate"
 for DOMAIN in $DOMAINS
 do
-    #echo "Enumerating subomains for $DOMAIN with Sublist3r"
+    UDOMAIN=$(echo $DOMAIN | sed 's/\./_/g' | sed 's/_$//g' )
+    
+    # Look up and write the domain's nameservers to a file
+    dig @$DNSSERVER -t ns -q $DOMAIN +noall +answer | grep -v ";" > "$TEMPFILE"
+    cat "$TEMPFILE" | sed '/^$/d' | sed 's/\t\t*/\t/g' | cut -f5 > "$WORKINGDIR/$UDOMAIN-nameservers"
+    rm "$TEMPFILE"
+    
+    # Invoke Sublist3r
+    echo "Enumerating subomains for $DOMAIN                                                               "
     python3 "$SUBLIST3R/sublist3r.py" -d $DOMAIN > "$TEMPFILE"
     # ansifilter strips escape codes
     # grep removes header lines and then filters only on FQDNs
-    cat "$TEMPFILE" | ansifilter | grep -v " " | grep "." >> "$SUBDOMAINFILE"
+    cat "$TEMPFILE" | ansifilter | grep -v " " | grep "." >> "$SUBDOMAINFILENAME"
     rm "$TEMPFILE"
-done | pv -cltp -s $NUMDOMAINS > /dev/null
+done | pv -cltp -s $NUMDOMAINS # > /dev/null
 
 # Use dig to get information about the A and SOA records of identifed subdomains
-NAMES=$(cat $SUBDOMAINFILE)
-WCNAMES=($(wc $SUBDOMAINFILE))
+NAMES=$(cat $SUBDOMAINFILENAME)
+WCNAMES=($(wc $SUBDOMAINFILENAME))
 NUMNAMES=${WCNAMES[0]}
-echo "$NUMNAMES subdomains to enumerate"
+clear
+echo "Step 2/2: $NUMNAMES subdomains to enumerate with DNS"
 for NAME in $NAMES
 do
-    #echo "Querying DNS for $NAME"
-    # 'dig -t a' outputs both A records *and* CNAME records
-    # 'dig -t cname' only outputs CNAME so we use type a
+    echo "Querying DNS for $NAME                                                               "
+    # Note: 'dig -t a' outputs both A records *and* CNAME records
+    # 'dig -t cname' only outputs CNAME
     # 'grep -v ";"' removes dig comments
-    dig @$DNSSERVER -t a -q $NAME +noall +answer | grep -v ";" >> "$TEMPFILE"
-    dig @$DNSSERVER -t soa -q $NAME +noall +authority | grep -v ";" >> "$TEMPFILE"
-done | pv -cltp -s $NUMNAMES > /dev/null
+    dig @$DNSSERVER -t a -q $NAME +noall +answer +authority | grep -v ";" >> "$TEMPFILE"
+    dig @$DNSSERVER -t soa -q $NAME +noall +answer +authority | grep -v ";" >> "$TEMPFILE"
+done | pv -cltp -s $NUMNAMES # > /dev/null
 
 # Clean up and write final output
 # Delete blank lines: sed '/^$/d'
@@ -60,4 +70,4 @@ done | pv -cltp -s $NUMNAMES > /dev/null
 # Extract only relevant fields (1=name, 4=type, 5=address) with cut
 cat "$TEMPFILE" | sed '/^$/d' | sed 's/\t\t*/\t/g' | sed 's/ /\t/g' | cut -f1,4-5 > "$OUTPUTFILE"
 rm "$TEMPFILE"
-open "$OUTPUTFILE"
+open "$WORKINGDIR"
